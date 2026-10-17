@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Audio Reactive Anime Dancer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050510; font-family: 'Inter', sans-serif; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        
+        /* Custom scrollbar for webkit */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
+        ::-webkit-scrollbar-thumb { background: rgba(255,136,0,0.5); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,136,0,0.8); }
+
+        .glass-panel {
+            background: rgba(15, 15, 25, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 136, 0, 0.3);
+            box-shadow: 0 8px 32px 0 rgba(255, 136, 0, 0.2);
+        }
+    </style>
+</head>
+<body class="text-white">
+
+    <div class="absolute inset-0 z-10 pointer-events-none flex flex-col justify-between p-6">
+        <!-- Header -->
+        <header class="flex justify-between items-start pointer-events-auto">
+            <div class="glass-panel rounded-2xl p-5 max-w-sm">
+                <h1 class="text-2xl font-black mb-2 text-transparent bg-clip-text bg-gradient-to-r from-orange-400 to-pink-500">
+                    🎵 Articulated Anime Dancer
+                </h1>
+                <p class="text-sm text-orange-200 mb-4 opacity-80">
+                    Upload an MP3/WAV. The character will bend her knees and elbows to the beat!
+                </p>
+                
+                <div class="relative w-full">
+                    <input type="file" id="audio-upload" accept="audio/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20">
+                    <div class="bg-gradient-to-r from-orange-500 to-pink-600 hover:from-orange-400 hover:to-pink-500 rounded-lg py-3 px-4 flex items-center justify-center gap-2 transition-all transform active:scale-95 shadow-lg shadow-orange-500/30">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                        <span class="font-bold text-sm" id="upload-label">Choose Audio File</span>
+                    </div>
+                </div>
+
+                <div class="relative w-full mt-3">
+                    <input type="file" id="model-upload" accept=".glb,.gltf" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20">
+                    <div class="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 rounded-lg py-3 px-4 flex items-center justify-center gap-2 transition-all transform active:scale-95 shadow-lg shadow-blue-500/30">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                        <span class="font-bold text-sm" id="model-upload-label">Upload Custom .GLB (Optional)</span>
+                    </div>
+                </div>
+
+                <!-- NEW: Infinite Freestyle Toggle -->
+                <div class="relative w-full mt-3">
+                    <button id="freestyle-toggle" class="w-full bg-gradient-to-r from-purple-600 to-purple-800 hover:from-purple-500 hover:to-purple-700 rounded-lg py-3 px-4 flex items-center justify-center gap-2 transition-all transform active:scale-95 shadow-lg shadow-purple-500/30 border border-purple-400/50">
+                        <span class="font-bold text-sm" id="freestyle-label">✨ Enable Infinite Freestyle</span>
+                    </button>
+                </div>
+
+                <audio id="audio-player" controls class="w-full mt-4 h-10 rounded-lg hidden"></audio>
+            </div>
+            
+            <div class="glass-panel rounded-xl p-3 flex flex-col items-center gap-2">
+                <span class="text-xs font-bold text-orange-300 uppercase tracking-wider">Current Move</span>
+                <div id="dance-state-badge" class="bg-orange-500/20 border border-orange-500/50 text-orange-100 px-3 py-1 rounded-full text-sm font-medium animate-pulse">
+                    Idle Waiting
+                </div>
+            </div>
+        </header>
+        
+        <!-- Error/Message Toast -->
+        <div id="message-toast" class="fixed top-5 left-1/2 transform -translate-x-1/2 glass-panel px-6 py-3 rounded-full text-orange-200 font-medium transition-all duration-300 opacity-0 translate-y-[-20px]">
+            Message
+        </div>
+    </div>
+
+    <!-- 3D Canvas Container -->
+    <div id="canvas-container"></div>
+
+    <script>
+        // --- Three.js Scene Setup ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x050510, 0.02);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 8, 25);
+        camera.lookAt(0, 4, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        // --- Lighting ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+
+        const spotLight = new THREE.SpotLight(0xffaa55, 1.5);
+        spotLight.position.set(5, 20, 10);
+        spotLight.angle = Math.PI / 4;
+        spotLight.penumbra = 0.5;
+        spotLight.castShadow = true;
+        scene.add(spotLight);
+
+        const blueLight = new THREE.PointLight(0x0044ff, 1, 50);
+        blueLight.position.set(-10, 5, 5);
+        scene.add(blueLight);
+
+        // --- Environment ---
+        const gridHelper = new THREE.GridHelper(100, 40, 0xff8800, 0x1a1a3a);
+        gridHelper.position.y = 0;
+        gridHelper.material.opacity = 0.4;
+        gridHelper.material.transparent = true;
+        scene.add(gridHelper);
+
+        const floorGeo = new THREE.PlaneGeometry(100, 100);
+        const floorMat = new THREE.ShadowMaterial({ opacity: 0.5 });
+        const floor = new THREE.Mesh(floorGeo, floorMat);
+        floor.rotation.x = -Math.PI / 2;
+        floor.receiveShadow = true;
+        scene.add(floor);
+
+        // --- Custom Model Variables ---
+        let customModelGroup = null;
+        let isCustomModelLoaded = false;
+
+        // --- ARTICULATED Character Construction ---
+        const character = new THREE.Group();
+        
+        // Colors & Materials
+        const skinMat = new THREE.MeshStandardMaterial({ color: 0xfff0e5, roughness: 0.4 });
+        const coatMat = new THREE.MeshStandardMaterial({ color: 0x2c2c40, roughness: 0.8 }); 
+        const tightsMat = new THREE.MeshStandardMaterial({ color: 0x332222, roughness: 0.9 }); 
+        const bootMat = new THREE.MeshStandardMaterial({ color: 0x1c1c2a, roughness: 0.6 }); 
+        const orangeMat = new THREE.MeshStandardMaterial({ color: 0xff8800, roughness: 0.4 }); 
+        
+        function createHairTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createLinearGradient(0, 0, 0, 256);
+            grad.addColorStop(0, '#ffcc00'); // Yellow top
+            grad.addColorStop(0.4, '#ff44aa'); // Pink middle
+            grad.addColorStop(1, '#3344ff'); // Blue tips
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 256, 256);
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+            return tex;
+        }
+        const hairMat = new THREE.MeshStandardMaterial({ map: createHairTexture(), roughness: 0.7 });
+
+        function createTorsoTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512; canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#2c2c40'; ctx.fillRect(0, 0, 512, 512); // Coat
+            ctx.fillStyle = '#ffffff'; ctx.fillRect(150, 0, 212, 512); // Shirt
+            ctx.fillStyle = '#ff8800'; ctx.fillRect(140, 0, 10, 512); ctx.fillRect(362, 0, 10, 512); // Orange Trim
+            ctx.fillRect(150, 40, 212, 15); // Collar
+            
+            // Red Tie
+            ctx.fillStyle = '#dd1111';
+            ctx.beginPath(); ctx.moveTo(236, 0); ctx.lineTo(276, 0); ctx.lineTo(286, 220); ctx.lineTo(256, 270); ctx.lineTo(226, 220); ctx.fill();
+            ctx.fillStyle = '#ffffff'; ctx.fillRect(246, 120, 20, 15); ctx.fillRect(246, 140, 10, 15); // Tie Detail
+            
+            // Belt
+            ctx.fillStyle = '#111111'; ctx.fillRect(150, 420, 212, 40);
+            ctx.fillStyle = '#888888'; ctx.fillRect(236, 415, 40, 50);
+            ctx.fillStyle = '#111111'; ctx.fillRect(246, 425, 20, 30);
+            const texture = new THREE.CanvasTexture(canvas); texture.center.set(0.5, 0.5); texture.rotation = Math.PI; return texture;
+        }
+        const torsoMat = new THREE.MeshStandardMaterial({ map: createTorsoTexture(), roughness: 0.8 });
+
+        function createAnimeFaceTexture() {
+            const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 512; const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#fff0e5'; ctx.fillRect(0, 0, 512, 512);
+            ctx.fillStyle = 'rgba(255, 120, 120, 0.3)'; ctx.beginPath(); ctx.ellipse(150, 270, 40, 20, 0, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.ellipse(362, 270, 40, 20, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#224499'; ctx.beginPath(); ctx.ellipse(180, 230, 30, 45, 0, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.ellipse(332, 230, 30, 45, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(190, 215, 10, 18, 0, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.ellipse(342, 215, 10, 18, 0, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.arc(170, 250, 5, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.arc(322, 250, 5, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = '#aa4455'; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.beginPath(); ctx.arc(256, 310, 20, 0.2 * Math.PI, 0.8 * Math.PI, false); ctx.stroke();
+            ctx.strokeStyle = '#ffbb00'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(140, 160); ctx.quadraticCurveTo(180, 150, 210, 170); ctx.stroke(); ctx.beginPath(); ctx.moveTo(372, 160); ctx.quadraticCurveTo(332, 150, 302, 170); ctx.stroke();
+            const texture = new THREE.CanvasTexture(canvas); texture.center.set(0.5, 0.5); texture.rotation = Math.PI; return texture;
+        }
+        const faceMat = new THREE.MeshStandardMaterial({ map: createAnimeFaceTexture(), roughness: 0.4 });
+        
+        // 1. Torso
+        const torsoPivot = new THREE.Group();
+        torsoPivot.position.y = 5.5; // Raised slightly to allow knee bending room
+        character.add(torsoPivot);
+
+        const dressGeo = new THREE.CylinderGeometry(0.8, 1.0, 2.5, 16);
+        const dress = new THREE.Mesh(dressGeo, torsoMat); dress.position.y = -1; dress.castShadow = true; torsoPivot.add(dress);
+        const skirtGeo = new THREE.CylinderGeometry(1.0, 1.1, 0.6, 16);
+        const skirt = new THREE.Mesh(skirtGeo, orangeMat); skirt.position.y = -2.4; torsoPivot.add(skirt);
+        const tailGeo = new THREE.BoxGeometry(1.8, 1.5, 0.1);
+        const tailMesh = new THREE.Mesh(tailGeo, coatMat); tailMesh.position.set(0, -2.5, -0.9); tailMesh.rotation.x = 0.2; torsoPivot.add(tailMesh);
+
+        // 2. Head
+        const headPivot = new THREE.Group(); headPivot.position.y = 0.5; torsoPivot.add(headPivot);
+        const headGeo = new THREE.SphereGeometry(1.2, 32, 32);
+        const head = new THREE.Mesh(headGeo, faceMat); head.rotation.y = -Math.PI / 2; head.castShadow = true; headPivot.add(head);
+        const hairBackGeo = new THREE.SphereGeometry(1.25, 16, 16, 0, Math.PI * 2, 0, Math.PI / 1.8);
+        const hairBack = new THREE.Mesh(hairBackGeo, hairMat); hairBack.position.y = 0.1; hairBack.rotation.x = -0.2; headPivot.add(hairBack);
+        for(let i=-2; i<=2; i++) {
+            const bangGeo = new THREE.ConeGeometry(0.3, 1.3, 8); const bang = new THREE.Mesh(bangGeo, hairMat); bang.position.set(i * 0.4, 0.7, 1.05); bang.rotation.x = 0.2; bang.rotation.z = -i * 0.1; headPivot.add(bang);
+        }
+
+        // 3. Pigtails
+        const earPivotL = new THREE.Group(); earPivotL.position.set(-1.1, 0.5, -0.2); headPivot.add(earPivotL);
+        const pigtailGeo = new THREE.CylinderGeometry(0.3, 0.05, 1.8, 8); const pigtailL = new THREE.Mesh(pigtailGeo, hairMat); pigtailL.position.set(0, -0.8, 0); earPivotL.add(pigtailL);
+        const tieGeo = new THREE.TorusGeometry(0.35, 0.08, 8, 16); const hairTieL = new THREE.Mesh(tieGeo, orangeMat); hairTieL.rotation.x = Math.PI/2; earPivotL.add(hairTieL);
+
+        const earPivotR = new THREE.Group(); earPivotR.position.set(1.1, 0.5, -0.2); headPivot.add(earPivotR);
+        const pigtailR = new THREE.Mesh(pigtailGeo, hairMat); pigtailR.position.set(0, -0.8, 0); earPivotR.add(pigtailR);
+        const hairTieR = new THREE.Mesh(tieGeo, orangeMat); hairTieR.rotation.x = Math.PI/2; earPivotR.add(hairTieR);
+
+        // --- ARTICULATED ARMS ---
+        const upperArmGeo = new THREE.CylinderGeometry(0.3, 0.25, 1.0, 8);
+        const lowerArmGeo = new THREE.CylinderGeometry(0.25, 0.2, 0.9, 8);
+        const jointGeo = new THREE.SphereGeometry(0.28, 8, 8);
+
+        // Left Arm
+        const shoulderL = new THREE.Group(); shoulderL.position.set(-1.3, -0.2, 0); torsoPivot.add(shoulderL);
+        const upperArmL = new THREE.Mesh(upperArmGeo, coatMat); upperArmL.position.y = -0.5; shoulderL.add(upperArmL);
+        const elbowL = new THREE.Group(); elbowL.position.y = -1.0; shoulderL.add(elbowL); // Elbow joint
+        const elbowJointL = new THREE.Mesh(jointGeo, coatMat); elbowL.add(elbowJointL);
+        const lowerArmL = new THREE.Mesh(lowerArmGeo, skinMat); lowerArmL.position.y = -0.45; elbowL.add(lowerArmL);
+        const cuffGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.1, 16); const cuffL = new THREE.Mesh(cuffGeo, orangeMat); cuffL.position.y = -0.1; elbowL.add(cuffL);
+        const handGeo = new THREE.SphereGeometry(0.25, 16, 16); const handL = new THREE.Mesh(handGeo, skinMat); handL.position.y = -0.9; elbowL.add(handL);
+
+        // Right Arm
+        const shoulderR = new THREE.Group(); shoulderR.position.set(1.3, -0.2, 0); torsoPivot.add(shoulderR);
+        const upperArmR = new THREE.Mesh(upperArmGeo, coatMat); upperArmR.position.y = -0.5; shoulderR.add(upperArmR);
+        const elbowR = new THREE.Group(); elbowR.position.y = -1.0; shoulderR.add(elbowR); // Elbow joint
+        const elbowJointR = new THREE.Mesh(jointGeo, coatMat); elbowR.add(elbowJointR);
+        const lowerArmR = new THREE.Mesh(lowerArmGeo, skinMat); lowerArmR.position.y = -0.45; elbowR.add(lowerArmR);
+        const cuffR = new THREE.Mesh(cuffGeo, orangeMat); cuffR.position.y = -0.1; elbowR.add(cuffR);
+        const handR = new THREE.Mesh(handGeo, skinMat); handR.position.y = -0.9; elbowR.add(handR);
+
+        // --- ARTICULATED LEGS ---
+        const thighGeo = new THREE.CylinderGeometry(0.35, 0.3, 1.2, 12);
+        const calfGeo = new THREE.CylinderGeometry(0.3, 0.25, 1.2, 12);
+        const kneeJointGeo = new THREE.SphereGeometry(0.3, 8, 8);
+
+        // Left Leg
+        const hipL = new THREE.Group(); hipL.position.set(-0.5, 3.2, 0); character.add(hipL); // Hips relative to floor
+        const thighL = new THREE.Mesh(thighGeo, tightsMat); thighL.position.y = -0.6; hipL.add(thighL);
+        const kneeL = new THREE.Group(); kneeL.position.y = -1.2; hipL.add(kneeL); // Knee joint
+        const kneeJointL = new THREE.Mesh(kneeJointGeo, bootMat); kneeL.add(kneeJointL);
+        const calfL = new THREE.Mesh(calfGeo, bootMat); calfL.position.y = -0.6; kneeL.add(calfL);
+        
+        const strapGeo = new THREE.CylinderGeometry(0.32, 0.36, 0.12, 12);
+        const strap1L = new THREE.Mesh(strapGeo, orangeMat); strap1L.position.y = -0.3; kneeL.add(strap1L);
+        const strap2L = new THREE.Mesh(strapGeo, orangeMat); strap2L.position.y = -0.8; kneeL.add(strap2L);
+        const shoeGeo = new THREE.BoxGeometry(0.45, 0.3, 0.7); const shoeL = new THREE.Mesh(shoeGeo, bootMat); shoeL.position.set(0, -1.2, 0.1); kneeL.add(shoeL);
+
+        // Right Leg
+        const hipR = new THREE.Group(); hipR.position.set(0.5, 3.2, 0); character.add(hipR);
+        const thighR = new THREE.Mesh(thighGeo, tightsMat); thighR.position.y = -0.6; hipR.add(thighR);
+        const kneeR = new THREE.Group(); kneeR.position.y = -1.2; hipR.add(kneeR); // Knee joint
+        const kneeJointR = new THREE.Mesh(kneeJointGeo, bootMat); kneeR.add(kneeJointR);
+        const calfR = new THREE.Mesh(calfGeo, bootMat); calfR.position.y = -0.6; kneeR.add(calfR);
+        
+        const strap1R = new THREE.Mesh(strapGeo, orangeMat); strap1R.position.y = -0.3; kneeR.add(strap1R);
+        const strap2R = new THREE.Mesh(strapGeo, orangeMat); strap2R.position.y = -0.8; kneeR.add(strap2R);
+        const shoeR = new THREE.Mesh(shoeGeo, bootMat); shoeR.position.set(0, -1.2, 0.1); kneeR.add(shoeR);
+
+        scene.add(character);
+
+        // --- Audio Context & Analyser ---
+        let audioContext;
+        let analyser;
+        let dataArray;
+        let isPlaying = false;
+        
+        const fileInput = document.getElementById('audio-upload');
+        const audioElement = document.getElementById('audio-player');
+        const uploadLabel = document.getElementById('upload-label');
+
+        function initAudio() {
+            if (audioContext) return;
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 256;
+            const source = audioContext.createMediaElementSource(audioElement);
+            source.connect(analyser); analyser.connect(audioContext.destination);
+            dataArray = new Uint8Array(analyser.frequencyBinCount);
+        }
+
+        fileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                initAudio();
+                const url = URL.createObjectURL(file);
+                audioElement.src = url; audioElement.play();
+                if (audioContext.state === 'suspended') audioContext.resume();
+                uploadLabel.textContent = file.name.length > 20 ? file.name.substring(0, 20) + '...' : file.name;
+                isPlaying = true;
+                audioElement.classList.remove('hidden'); audioElement.classList.add('block');
+                showToast("Music loaded! Let's dance!");
+            }
+        });
+
+        audioElement.addEventListener('pause', () => isPlaying = false);
+        audioElement.addEventListener('play', () => isPlaying = true);
+
+        // --- 3D GLB Model Loader ---
+        const modelInput = document.getElementById('model-upload');
+        const modelLabel = document.getElementById('model-upload-label');
+        const gltfLoader = new THREE.GLTFLoader();
+
+        modelInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const url = URL.createObjectURL(file);
+                showToast("Loading 3D model...");
+                modelLabel.textContent = "Loading...";
+
+                gltfLoader.load(url, (gltf) => {
+                    scene.remove(character);
+                    if(customModelGroup) scene.remove(customModelGroup);
+                    
+                    const customModel = gltf.scene;
+                    const box = new THREE.Box3().setFromObject(customModel);
+                    const size = box.getSize(new THREE.Vector3()).length();
+                    const center = box.getCenter(new THREE.Vector3());
+                    customModel.position.x = -center.x; customModel.position.y = -center.y; customModel.position.z = -center.z;
+                    
+                    customModelGroup = new THREE.Group();
+                    const targetSize = 12; 
+                    customModel.scale.setScalar(targetSize / size);
+                    
+                    customModelGroup.add(customModel);
+                    customModelGroup.userData.baseY = 2.5; 
+                    customModelGroup.position.y = customModelGroup.userData.baseY;
+
+                    customModelGroup.traverse((node) => { if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; } });
+                    scene.add(customModelGroup);
+                    isCustomModelLoaded = true;
+                    modelLabel.textContent = file.name.substring(0, 20) + '...';
+                    showToast("Loaded! Initiating Whole-Body Groove!");
+                });
+            }
+        });
+
+        // --- Infinite Freestyle Toggle ---
+        let isFreestyleMode = false;
+        const freestyleBtn = document.getElementById('freestyle-toggle');
+        const freestyleLabel = document.getElementById('freestyle-label');
+
+        freestyleBtn.addEventListener('click', () => {
+            isFreestyleMode = !isFreestyleMode;
+            if(isFreestyleMode) {
+                freestyleLabel.textContent = "🛑 Disable Infinite Freestyle";
+                freestyleBtn.classList.replace('from-purple-600', 'from-red-600');
+                freestyleBtn.classList.replace('to-purple-800', 'to-red-800');
+                showToast("Infinite Freestyle ON! She'll invent her own steps.");
+            } else {
+                freestyleLabel.textContent = "✨ Enable Infinite Freestyle";
+                freestyleBtn.classList.replace('from-red-600', 'from-purple-600');
+                freestyleBtn.classList.replace('to-red-800', 'to-purple-800');
+                changeState(DANCE_STATES.IDLE);
+                showToast("Infinite Freestyle OFF. Returning to preset choreography.");
+            }
+        });
+
+        function showToast(msg) {
+            const toast = document.getElementById('message-toast');
+            toast.textContent = msg; toast.style.opacity = '1'; toast.style.transform = 'translate(-50%, 0)';
+            setTimeout(() => { toast.style.opacity = '0'; toast.style.transform = 'translate(-50%, -20px)'; }, 3000);
+        }
+
+        // --- Dance Logic & Choreography ---
+        const DANCE_STATES = { IDLE: 0, BOB_HEAD: 1, JUMP_HYPE: 2, WAVE_ARMS: 3, SIDE_STEP: 4, SPIN: 5, FREESTYLE: 6 };
+        const STATE_NAMES = ["Idle", "Grooving", "Hype Jump!", "Waving", "Side Stepping", "Spinning!", "Generative Freestyle"];
+        
+        let currentState = DANCE_STATES.IDLE;
+        let beatCooldown = 0;
+        let bassAverage = 0;
+        
+        // Target Rotations
+        const targets = {
+            torsoY: 5.5, torsoRotY: 0, torsoRotZ: 0, headX: 0, headY: 0,
+            shoulderLX: 0, shoulderLZ: 0.2, elbowLX: 0, 
+            shoulderRX: 0, shoulderRZ: -0.2, elbowRX: 0, 
+            hipLX: 0, hipLZ: 0, kneeLX: 0, 
+            hipRX: 0, hipRZ: 0, kneeRX: 0,
+            earL: Math.PI/8, earR: -Math.PI/8 
+        };
+
+        // NEW: Freestyle Engine State
+        const freestyleTargets = {
+            torsoYOffset: 0, torsoRotY: 0, torsoRotZ: 0,
+            shoulderLX: 0, shoulderLZ: 0, elbowLX: 0,
+            shoulderRX: 0, shoulderRZ: 0, elbowRX: 0,
+            hipLX: 0, hipLZ: 0, kneeLX: 0,
+            hipRX: 0, hipRZ: 0, kneeRX: 0,
+            bounceSpeed: 4, bounceAmp: 0.5, armSpeedL: 2, armSpeedR: 2
+        };
+
+        const lerp = (start, end, amt) => (1 - amt) * start + amt * end;
+
+        function generateProceduralMove() {
+            // Randomize Torso Core
+            freestyleTargets.torsoYOffset = (Math.random() - 0.2) * 1.2; // -0.2 to 1.0 (Squat to stretch)
+            freestyleTargets.torsoRotY = (Math.random() - 0.5) * 1.5;
+            freestyleTargets.torsoRotZ = (Math.random() - 0.5) * 0.6;
+
+            // Randomize Arms (50% chance to mirror left and right for coordination)
+            const mirrorArms = Math.random() > 0.5;
+            const sLX = -Math.random() * Math.PI; // Forward/Up
+            const sLZ = Math.random() * Math.PI * 0.8; // Outward
+            const eLX = -Math.random() * 2.0; // Bend
+            
+            freestyleTargets.shoulderLX = sLX; freestyleTargets.shoulderLZ = sLZ; freestyleTargets.elbowLX = eLX;
+
+            if (mirrorArms) {
+                freestyleTargets.shoulderRX = sLX; freestyleTargets.shoulderRZ = -sLZ; freestyleTargets.elbowRX = eLX;
+            } else {
+                freestyleTargets.shoulderRX = -Math.random() * Math.PI; 
+                freestyleTargets.shoulderRZ = -Math.random() * Math.PI * 0.8; 
+                freestyleTargets.elbowRX = -Math.random() * 2.0;
+            }
+
+            // Randomize Legs (Step logic to prevent breaking ankles)
+            const legMode = Math.random();
+            if (legMode < 0.3) { 
+                // Deep Squat
+                const bend = 0.5 + Math.random() * 0.5;
+                freestyleTargets.hipLX = -bend; freestyleTargets.kneeLX = bend * 2;
+                freestyleTargets.hipRX = -bend; freestyleTargets.kneeRX = bend * 2;
+                freestyleTargets.torsoYOffset -= bend; 
+            } else if (legMode < 0.6) { 
+                // Step Left
+                freestyleTargets.hipLX = -0.5 - Math.random() * 0.5; freestyleTargets.kneeLX = 0.8 + Math.random();
+                freestyleTargets.hipRX = -0.1; freestyleTargets.kneeRX = 0.2;
+            } else { 
+                // Step Right
+                freestyleTargets.hipLX = -0.1; freestyleTargets.kneeLX = 0.2;
+                freestyleTargets.hipRX = -0.5 - Math.random() * 0.5; freestyleTargets.kneeRX = 0.8 + Math.random();
+            }
+
+            // Randomize continuous oscillator speeds to make the pose "alive"
+            freestyleTargets.bounceSpeed = 4 + Math.random() * 8;
+            freestyleTargets.bounceAmp = 0.2 + Math.random() * 0.6;
+            freestyleTargets.armSpeedL = 2 + Math.random() * 8;
+            freestyleTargets.armSpeedR = 2 + Math.random() * 8;
+        }
+
+        function updateBeatDetection(deltaTime) {
+            if (!isPlaying || !analyser) return;
+
+            analyser.getByteFrequencyData(dataArray);
+            let bassSum = 0; for(let i = 0; i < 10; i++) bassSum += dataArray[i];
+            bassAverage = bassSum / 10;
+
+            const mid = dataArray[50];
+            if(mid > 100) gridHelper.material.color.setHSL((Date.now() % 5000)/5000, 1, 0.5);
+            else gridHelper.material.color.setHex(0xff8800);
+
+            beatCooldown -= deltaTime;
+            
+            if (bassAverage > 210 && beatCooldown <= 0) {
+                beatCooldown = 0.5; 
+                
+                if (isFreestyleMode) {
+                    changeState(DANCE_STATES.FREESTYLE);
+                    generateProceduralMove();
+                } else {
+                    changeState(Math.floor(Math.random() * 4) + 2);
+                }
+
+                targets.torsoY = 6.5; // Bounce up on heavy beat
+                targets.earL = Math.PI/3; targets.earR = -Math.PI/3;
+            } else if (bassAverage > 150 && beatCooldown <= 0) {
+                if(currentState === DANCE_STATES.IDLE && !isFreestyleMode) changeState(DANCE_STATES.BOB_HEAD);
+                beatCooldown = 0.3;
+            } else if (bassAverage < 50 && currentState !== DANCE_STATES.IDLE && beatCooldown <= -2) {
+                changeState(DANCE_STATES.IDLE);
+            }
+        }
+
+        function changeState(newState) {
+            if(currentState === newState) return;
+            currentState = newState;
+            const badge = document.getElementById('dance-state-badge');
+            badge.textContent = STATE_NAMES[currentState];
+            badge.classList.remove('animate-pulse'); void badge.offsetWidth; badge.classList.add('animate-pulse');
+        }
+
+        const clock = new THREE.Clock();
+
+        function applyDanceChoreography(time) {
+            // Base rest state targets (reset every frame unless in freestyle)
+            if (currentState !== DANCE_STATES.FREESTYLE) {
+                targets.torsoY = 5.5; targets.torsoRotY = 0; targets.torsoRotZ = 0; targets.headX = 0; targets.headY = 0;
+                targets.earL = Math.PI/8 + Math.sin(time * 5) * 0.1; targets.earR = -Math.PI/8 - Math.cos(time * 4) * 0.1;
+                targets.hipLX = 0; targets.hipRX = 0; targets.hipLZ = 0; targets.hipRZ = 0;
+                targets.kneeLX = 0; targets.kneeRX = 0; 
+                targets.elbowLX = 0; targets.elbowRX = 0;
+            }
+
+            switch(currentState) {
+                case DANCE_STATES.IDLE:
+                    targets.torsoY = 5.5 + Math.sin(time * 2) * 0.1;
+                    targets.shoulderLX = 0; targets.shoulderLZ = 0.2; targets.elbowLX = -0.1;
+                    targets.shoulderRX = 0; targets.shoulderRZ = -0.2; targets.elbowRX = -0.1;
+                    break;
+                    
+                case DANCE_STATES.BOB_HEAD: 
+                    targets.torsoY = 5.3 + Math.sin(time * 8) * 0.3;
+                    targets.headX = Math.sin(time * 8) * 0.2;
+                    targets.shoulderLX = Math.sin(time * 4) * 0.5; targets.shoulderLZ = 0.4; targets.elbowLX = -0.5; 
+                    targets.shoulderRX = -Math.sin(time * 4) * 0.5; targets.shoulderRZ = -0.4; targets.elbowRX = -0.5;
+                    targets.hipLX = -0.2; targets.hipRX = -0.2; targets.kneeLX = 0.4; targets.kneeRX = 0.4;
+                    break;
+
+                case DANCE_STATES.JUMP_HYPE: 
+                    const jumpCycle = Math.sin(time * 12);
+                    targets.torsoY = 5.5 + Math.abs(jumpCycle) * 1.5;
+                    targets.shoulderLX = -Math.PI + jumpCycle * 0.5; targets.shoulderLZ = 0.5; targets.elbowLX = -0.2;
+                    targets.shoulderRX = -Math.PI + jumpCycle * 0.5; targets.shoulderRZ = -0.5; targets.elbowRX = -0.2;
+                    if(jumpCycle > 0) { targets.hipLX = -0.8; targets.kneeLX = 1.0; } else { targets.hipRX = -0.8; targets.kneeRX = 1.0; }
+                    break;
+
+                case DANCE_STATES.WAVE_ARMS:
+                    targets.torsoY = 5.5 + Math.sin(time * 6) * 0.2;
+                    targets.torsoRotY = Math.sin(time * 4) * 0.3;
+                    targets.shoulderLX = -Math.PI/2; targets.shoulderLZ = Math.PI/4; targets.elbowLX = Math.sin(time * 8) * 1; 
+                    targets.shoulderRX = -Math.PI/2; targets.shoulderRZ = -Math.PI/4; targets.elbowRX = -Math.sin(time * 8) * 1;
+                    targets.hipLX = -0.1; targets.hipRX = -0.1; targets.kneeLX = 0.2; targets.kneeRX = 0.2;
+                    break;
+
+                case DANCE_STATES.SIDE_STEP:
+                    const side = Math.sin(time * 6);
+                    targets.torsoRotZ = side * 0.2;
+                    targets.torsoY = 5.5 + Math.abs(Math.cos(time * 6)) * 0.4;
+                    targets.shoulderLX = side * 0.5; targets.shoulderLZ = 0.5; targets.elbowLX = -0.8;
+                    targets.shoulderRX = side * 0.5; targets.shoulderRZ = -0.5; targets.elbowRX = -0.8;
+                    
+                    targets.hipLX = side > 0 ? side * 0.5 : 0; targets.hipLZ = side > 0 ? side * 0.2 : 0;
+                    targets.hipRX = side < 0 ? -side * 0.5 : 0; targets.hipRZ = side < 0 ? side * 0.2 : 0;
+                    targets.kneeLX = side > 0 ? 0.5 : 0.1; 
+                    targets.kneeRX = side < 0 ? 0.5 : 0.1;
+                    break;
+
+                case DANCE_STATES.SPIN: 
+                    targets.torsoRotY = time * 5;
+                    targets.torsoY = 5.5 + Math.abs(Math.sin(time * 10)) * 0.5;
+                    targets.shoulderLX = -Math.PI/3; targets.shoulderLZ = 1.0; targets.elbowLX = -0.2;
+                    targets.shoulderRX = -Math.PI/3; targets.shoulderRZ = -1.0; targets.elbowRX = -0.2;
+                    targets.hipLX = -0.2; targets.hipRX = -0.2; targets.kneeLX = 0.4; targets.kneeRX = 0.4;
+                    break;
+
+                // NEW: Applies the Procedural / Random targets + continuous oscillation
+                case DANCE_STATES.FREESTYLE:
+                    targets.torsoY = 5.5 + freestyleTargets.torsoYOffset + Math.sin(time * freestyleTargets.bounceSpeed) * freestyleTargets.bounceAmp;
+                    targets.torsoRotY = freestyleTargets.torsoRotY + Math.sin(time * 2) * 0.2;
+                    targets.torsoRotZ = freestyleTargets.torsoRotZ + Math.cos(time * 3) * 0.1;
+                    
+                    // Add sine wave motion on top of generated random poses
+                    targets.shoulderLX = freestyleTargets.shoulderLX + Math.sin(time * freestyleTargets.armSpeedL) * 0.3;
+                    targets.shoulderLZ = freestyleTargets.shoulderLZ;
+                    targets.elbowLX = freestyleTargets.elbowLX + Math.abs(Math.sin(time * freestyleTargets.armSpeedL)) * 0.5;
+                    
+                    targets.shoulderRX = freestyleTargets.shoulderRX + Math.sin(time * freestyleTargets.armSpeedR) * 0.3;
+                    targets.shoulderRZ = freestyleTargets.shoulderRZ;
+                    targets.elbowRX = freestyleTargets.elbowRX + Math.abs(Math.sin(time * freestyleTargets.armSpeedR)) * 0.5;
+
+                    targets.hipLX = freestyleTargets.hipLX; targets.kneeLX = freestyleTargets.kneeLX;
+                    targets.hipRX = freestyleTargets.hipRX; targets.kneeRX = freestyleTargets.kneeRX;
+                    
+                    targets.earL = Math.PI/4 + Math.sin(time * 8) * 0.2; 
+                    targets.earR = -Math.PI/4 - Math.cos(time * 8) * 0.2;
+                    break;
+            }
+
+            const lerpSpeed = 0.15;
+            
+            if (isCustomModelLoaded && customModelGroup) {
+                const yOffset = targets.torsoY - 5.5; 
+                customModelGroup.position.y = lerp(customModelGroup.position.y, customModelGroup.userData.baseY + yOffset, lerpSpeed);
+                customModelGroup.rotation.y = (currentState === DANCE_STATES.SPIN) ? targets.torsoRotY : lerp(customModelGroup.rotation.y, targets.torsoRotY, lerpSpeed);
+                customModelGroup.rotation.z = lerp(customModelGroup.rotation.z, targets.torsoRotZ, lerpSpeed);
+                customModelGroup.rotation.x = lerp(customModelGroup.rotation.x, targets.headX, lerpSpeed);
+            } else {
+                // Apply Articulated Joints
+                torsoPivot.position.y = lerp(torsoPivot.position.y, targets.torsoY, lerpSpeed);
+                torsoPivot.rotation.y = (currentState === DANCE_STATES.SPIN) ? targets.torsoRotY : lerp(torsoPivot.rotation.y, targets.torsoRotY, lerpSpeed);
+                torsoPivot.rotation.z = lerp(torsoPivot.rotation.z, targets.torsoRotZ, lerpSpeed);
+                
+                headPivot.rotation.x = lerp(headPivot.rotation.x, targets.headX, lerpSpeed);
+                headPivot.rotation.y = lerp(headPivot.rotation.y, targets.headY, lerpSpeed);
+                
+                shoulderL.rotation.x = lerp(shoulderL.rotation.x, targets.shoulderLX, lerpSpeed);
+                shoulderL.rotation.z = lerp(shoulderL.rotation.z, targets.shoulderLZ, lerpSpeed);
+                shoulderR.rotation.x = lerp(shoulderR.rotation.x, targets.shoulderRX, lerpSpeed);
+                shoulderR.rotation.z = lerp(shoulderR.rotation.z, targets.shoulderRZ, lerpSpeed);
+                
+                elbowL.rotation.x = lerp(elbowL.rotation.x, targets.elbowLX, lerpSpeed);
+                elbowR.rotation.x = lerp(elbowR.rotation.x, targets.elbowRX, lerpSpeed);
+                
+                hipL.rotation.x = lerp(hipL.rotation.x, targets.hipLX, lerpSpeed);
+                hipL.rotation.z = lerp(hipL.rotation.z, targets.hipLZ, lerpSpeed);
+                hipR.rotation.x = lerp(hipR.rotation.x, targets.hipRX, lerpSpeed);
+                hipR.rotation.z = lerp(hipR.rotation.z, targets.hipRZ, lerpSpeed);
+
+                kneeL.rotation.x = lerp(kneeL.rotation.x, targets.kneeLX, lerpSpeed);
+                kneeR.rotation.x = lerp(kneeR.rotation.x, targets.kneeRX, lerpSpeed);
+
+                earPivotL.rotation.z = lerp(earPivotL.rotation.z, targets.earL, 0.2); 
+                earPivotR.rotation.z = lerp(earPivotR.rotation.z, targets.earR, 0.2);
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const deltaTime = clock.getDelta(); const time = clock.getElapsedTime();
+            updateBeatDetection(deltaTime); applyDanceChoreography(time);
+
+            camera.position.x = Math.sin(time * 0.2) * 5;
+            camera.position.z = 25 - Math.cos(time * 0.2) * 2;
+            camera.lookAt(0, 4, 0);
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+    </script>
+</body>
+</html>
